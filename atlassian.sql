@@ -2,12 +2,14 @@ CREATE OR REPLACE package atlassian as
 /* created by A. Tarazanov 2019-02-01*/
 --API Basic authorization
 auth_header varchar2(256) := 'Basic ***REMOVED***';
+auth_login varchar2(32)     := '***REMOVED***';
+auth_password varchar2(32)  := '***REMOVED***';
 --hosts
-crowd       varchar2(256) := 'http://crowdft***REMOVED***';
-jira        varchar2(256) := 'http://jiraft***REMOVED***';
-bitbucket   varchar2(256) := 'http://gitft***REMOVED***';
-confluence  varchar2(256) := 'http://confluenceft***REMOVED***';
-artifactory varchar2(256) := 'http://vartiapp1***REMOVED***';
+crowd       varchar2(256) := 'http://crowd-dc***REMOVED***';
+jira        varchar2(256) := 'http://jira***REMOVED***';
+bitbucket   varchar2(256) := 'http://git***REMOVED***';
+confluence  varchar2(256) := 'http://confluence***REMOVED***';
+artifactory varchar2(256) := 'http://artapp***REMOVED***';
 --Jira Developers role_id
 jiraRoleId  varchar2(32)  := '10090';
 --artifactory repos prefixes
@@ -80,10 +82,11 @@ BEGIN
   utl_http.set_body_charset('UTF-8'); --Catalina cannot read request body in AL32UTF8
   utl_http.set_transfer_timeout(20);
   req := utl_http.begin_request(the_url, 'POST','HTTP/1.1');
+  utl_http.set_authentication(req, auth_login, auth_password);
   utl_http.set_header(req, 'user-agent', 'utl_http');
   utl_http.set_header(req, 'content-type', 'application/json');
   utl_http.set_header(req, 'accept', 'application/json');
-  utl_http.set_header(req, 'authorization', auth_header);
+  --utl_http.set_header(req, 'authorization', auth_header);
   utl_http.set_header(req, 'content-length', lengthb(jdata)); -- lengthB means Binary lenth
   utl_http.write_raw(req, utl_raw.cast_to_raw(jdata)); -- we will send BODY in raw
   resp := utl_http.get_response(req);
@@ -104,9 +107,10 @@ BEGIN
   utl_http.set_body_charset('UTF-8'); --Catalina cannot read request body in AL32UTF8
   utl_http.set_transfer_timeout(10);
   req := utl_http.begin_request(the_url, 'PUT','HTTP/1.1');
+  utl_http.set_authentication(req, auth_login, auth_password);
   utl_http.set_header(req, 'user-agent', 'utl_http');
   utl_http.set_header(req, 'content-type', 'application/json');
-  utl_http.set_header(req, 'authorization', auth_header);
+  --utl_http.set_header(req, 'authorization', auth_header);
   utl_http.set_header(req, 'content-length', lengthb(jdata)); -- lengthB means Binary lenth
   utl_http.write_raw(req, utl_raw.cast_to_raw(jdata)); -- we will send BODY in raw  
   resp := utl_http.get_response(req);
@@ -124,8 +128,9 @@ is
 BEGIN
   utl_http.set_transfer_timeout(20);
   req := utl_http.begin_request(the_url, 'DELETE','HTTP/1.1');
+  utl_http.set_authentication(req, auth_login, auth_password);
   utl_http.set_header(req, 'user-agent', 'utl_http');
-  utl_http.set_header(req, 'authorization', auth_header);
+  --utl_http.set_header(req, 'authorization', auth_header);
   resp := utl_http.get_response(req);
   dbms_output.put_line(resp.status_code);
   utl_http.end_response(resp);
@@ -141,12 +146,12 @@ is
 BEGIN
   utl_http.set_transfer_timeout(10);
   req := utl_http.begin_request(the_url, 'GET','HTTP/1.1');
-  utl_http.set_header(req, 'user-agent', 'utl_http');
+  utl_http.set_authentication(req, auth_login, auth_password);
+  utl_http.set_header(req, 'User-Agent', 'utl_http');
   utl_http.set_header(req, 'accept', 'application/json');
-  utl_http.set_header(req, 'authorization', auth_header);
   resp := utl_http.get_response(req);
-  utl_http.end_response(resp);
-  return resp.status_code;
+  utl_http.end_response(resp);  
+    return resp.status_code;
   exception WHEN others THEN return '-200';
 end rest_get;
 
@@ -158,9 +163,10 @@ is
 BEGIN
   utl_http.set_transfer_timeout(10);
   req := utl_http.begin_request(the_url, 'PUT','HTTP/1.1');
+  utl_http.set_authentication(req, auth_login, auth_password);
   utl_http.set_header(req, 'user-agent', 'utl_http');
   utl_http.set_header(req, 'accept', 'application/json');
-  utl_http.set_header(req, 'authorization', auth_header);
+  --utl_http.set_header(req, 'authorization', auth_header);
   resp := utl_http.get_response(req);
   utl_http.end_response(resp);
   dbms_output.put_line('put status is '||resp.status_code);
@@ -177,9 +183,10 @@ is
 BEGIN
   utl_http.set_transfer_timeout(10);
   req := utl_http.begin_request(the_url, 'GET','HTTP/1.1');
+  utl_http.set_authentication(req, auth_login, auth_password);
   utl_http.set_header(req, 'user-agent', 'utl_http');
   utl_http.set_header(req, 'accept', 'application/json');
-  utl_http.set_header(req, 'authorization', auth_header);
+ -- utl_http.set_header(req, 'authorization', auth_header);
   resp := utl_http.get_response(req);
   dbms_output.put_line(resp.status_code);
   utl_http.end_response(resp);
@@ -502,7 +509,7 @@ function jiraCreateProject (pr_name in varchar2, pr_key in varchar2, pr_desc in 
 is
   method varchar2(256) := '/rest/api/2/project';
   url varchar2(512);
-  jdata varchar2(512);
+  jdata varchar2(4000);
   res varchar2(1024);
   cres varchar2(1024); 
 begin
@@ -756,8 +763,8 @@ begin
     loop
         cres := bitbucketAddGroupPermToRepo(upper(pr_key), stashprefix(i));
     end loop;
-    else raise_application_error(-20408, 'BITBUCKET Error: возникла ошибка при создании репозитория '||upper(pr_key)||'REPO!Обратитесь в поддержку StarterKit.');
-    end if;
+  end if;
+  --else raise_application_error(-20408, 'BITBUCKET Error: возникла ошибка при создании репозитория '||upper(pr_key)||'REPO!Обратитесь в поддержку StarterKit.');
   return res;
 end bitbucketCreateRepository;
 
