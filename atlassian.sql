@@ -73,7 +73,7 @@ end atlassian;
 
 CREATE OR REPLACE package body         atlassian as
 
---отправить JSON запросом POST
+-- HTTP POST request with JSON body
 function rest_post (the_url in varchar2, jdata in varchar2) return pls_integer
 is
   req   utl_http.req;
@@ -98,7 +98,7 @@ BEGIN
         utl_http.end_response(resp);
 end rest_post;
 
---отправить JSON запросом PUT
+--HTTP PUT request with JSON body
 function rest_put_json (the_url in varchar2, jdata in varchar2) return pls_integer
 is
   req   utl_http.req;
@@ -120,7 +120,7 @@ BEGIN
   exception WHEN others THEN return '-200';
 end rest_put_json;
 
---отправить запрос DELETE
+--HTTP DELETE request
 function rest_delete (the_url in varchar2) return pls_integer
 is
   req   utl_http.req;
@@ -138,7 +138,7 @@ BEGIN
   exception WHEN others THEN return '-200';
 end rest_delete;
 
---отправить запрос GET
+-- HTTP GET request
 function rest_get (the_url in varchar2) return pls_integer
 is
   req   utl_http.req;
@@ -155,7 +155,7 @@ BEGIN
   exception WHEN others THEN return '-200';
 end rest_get;
 
---отправить запрос PUT
+-- HTTP PUT request
 function rest_put (the_url in varchar2) return pls_integer
 is
   req   utl_http.req;
@@ -174,7 +174,7 @@ BEGIN
   exception WHEN others THEN return '-200';
 end rest_put;
 
--- отправить GET и распарсить результат
+-- HTTP GET request and parse result
 function        json_get (the_url in varchar2) return varchar2
 is
   req   utl_http.req;
@@ -194,9 +194,7 @@ BEGIN
   exception WHEN others THEN return '-200';
 end json_get;
 
---BMSP-12824 решение для синхронизации Bitbucket
---а так же костыль для Confluence
---и для Jira оказывается надо
+--BMSP-12824 Bitbucket/Confluence/Jira sync trick
 procedure       fixGroupsPermissions
 is
   url varchar2(512);
@@ -207,7 +205,7 @@ begin
 begin --bitbucket
   for wrec in (
   select full_url, method 
-  from ***REMOVED***_callrest_result 
+  from atlassian_callrest_result 
   where system_name = 'bitbucket' and method in ('bitbucketAddGroupPermToProject','bitbucketAddGroupPermToRepo') and result_text = 'FAILED')
     loop
     dbms_output.put_line(wrec.full_url);
@@ -224,7 +222,7 @@ begin --bitbucket
                            else 'ERROR' end||'"
 }';
     dbms_output.put_line (res);
-    update ***REMOVED***_callrest_result 
+    update atlassian_callrest_result 
     set result_code = json_value(res, '$.response'),
         result_text = json_value(res, '$.result'),
         result_msg = res,
@@ -234,10 +232,10 @@ begin --bitbucket
     end loop;
 end;--bitbucket
 begin --confluence
-for wrec in (select full_url,jdata from ***REMOVED***_callrest_result where system_name = 'confluence' and method = 'confluenceAddPermissionToGroup' and result_text = 'FAILED')
+for wrec in (select full_url,jdata from atlassian_callrest_result where system_name = 'confluence' and method = 'confluenceAddPermissionToGroup' and result_text = 'FAILED')
     loop
     dbms_output.put_line(wrec.full_url||chr(10)||chr(13)||'jdata is :'||wrec.jdata);
-    /* Проверяем что Confluence синхронизировался с CROWD и группа появилась в списке доступных к назначению прав пространству*/
+	/*Lets check Crowd and Confluence are synced so group is available to join*/
     select json_value(wrec.jdata,'$.params[1]') into group_key from dual;
     if rest_get(confluence||'/rest/api/group/'||group_key) = 200 then
     res := rest_post(wrec.full_url, wrec.jdata);
@@ -249,7 +247,7 @@ for wrec in (select full_url,jdata from ***REMOVED***_callrest_result where syst
                            else 'ERROR: cannot add permissions to Space.' end||'"
 }';
     dbms_output.put_line (res);
-    update ***REMOVED***_callrest_result 
+    update atlassian_callrest_result 
     set result_code = json_value(res, '$.response'),
         result_text = json_value(res, '$.result'),
         result_msg = res,
@@ -261,10 +259,10 @@ for wrec in (select full_url,jdata from ***REMOVED***_callrest_result where syst
 end; --confluence   
 
 begin --jira
-for wrec in (select full_url,jdata from ***REMOVED***_callrest_result where system_name = 'jira' and method = 'jiraSetGroupToProjectRole' and result_text = 'FAILED')
+for wrec in (select full_url,jdata from atlassian_callrest_result where system_name = 'jira' and method = 'jiraSetGroupToProjectRole' and result_text = 'FAILED')
     loop
     dbms_output.put_line(wrec.full_url||chr(10)||chr(13)||'jdata is :'||wrec.jdata);
-    /* Проверяем что Jira синхронизировался с CROWD и группа появилась в списке доступных к назначению прав пространству*/
+	/*Lets check Crowd and Jira are synced so group is available to join*/
     select json_value(wrec.jdata,'$.categorisedActors."atlassian-group-role-actor"[0]') into group_key from dual;
     if rest_get(jira||'/rest/api/2/group/member?groupname='||group_key) = 200 then
     res := rest_put_json(wrec.full_url,wrec.jdata);
@@ -276,7 +274,7 @@ for wrec in (select full_url,jdata from ***REMOVED***_callrest_result where syst
                            else 'ERROR: cannot add permissions to group '||group_key||'.' end||'"
 }';
     dbms_output.put_line (res);
-    update ***REMOVED***_callrest_result 
+    update atlassian_callrest_result 
     set result_code = json_value(res, '$.response'),
         result_text = json_value(res, '$.result'),
         result_msg = res,
@@ -289,28 +287,28 @@ end; --jira
 end fixGroupsPermissions;
 
 
---Проверить доступность серверов atlassian
+--Check atlassian servers availability
 procedure checkServers
 as
 res pls_integer;
 begin
 utl_http.set_transfer_timeout(2);
-for i in (select url from ***REMOVED***_servers)
+for i in (select url from atlassian_servers)
 loop
 begin
 res := rest_get(i.url);
 if res = 200 then 
-    update ***REMOVED***_servers 
+    update atlassian_servers 
     set 
     status = 'up', 
-    sk_label = sk_value || ' <span class="fa fa-circle" style="color:#4cd964;font-size:1.4em;" title="Сервер ' || sk_value ||' доступен"></span>',
+    sk_label = sk_value || ' <span class="fa fa-circle" style="color:#4cd964;font-size:1.4em;" title="Server ' || sk_value ||' is up"></span>',
     status_code = 200,
     checked = sysdate
     where url=i.url;
 else 
-    update ***REMOVED***_servers 
+    update atlassian_servers 
             set status = 'down', 
-            sk_label = sk_value || ' <span class="fa fa-circle" style="color:#ff3b30;font-size:1.4em;" title="Сервер ' || sk_value ||' недоступен"></span>',
+            sk_label = sk_value || ' <span class="fa fa-circle" style="color:#ff3b30;font-size:1.4em;" title="Server ' || sk_value ||' is down"></span>',
             status_code = res, 
             checked = sysdate 
             where url=i.url;
@@ -318,9 +316,9 @@ end if;
 exception
         when others then
         dbms_output.put_line('ERROR'||i.url);
-            update ***REMOVED***_servers 
+            update atlassian_servers 
             set status = 'down', 
-            sk_label = sk_value || ' <span class="fa fa-circle" style="color:#ff3b30;font-size:1.4em;" title="Сервер ' || sk_value ||' недоступен"></span>',
+            sk_label = sk_value || ' <span class="fa fa-circle" style="color:#ff3b30;font-size:1.4em;" title="Server ' || sk_value ||' is down"></span>',
             status_code = NULL, 
             checked = sysdate 
             where url=i.url;
@@ -335,7 +333,7 @@ end checkServers;
 
 */
 
---Проверить наличие пользователя в Crowd
+--Check Crowd user existence
 function crowdCheckUser (user_name in varchar2) return varchar2
 is
   method varchar2(256) := '/crowd/rest/usermanagement/1/user?username=';
@@ -350,7 +348,7 @@ begin
   return res;
 end crowdCheckUser;
 
---Проверить наличие группы в Crowd
+--Check Crowd group existence
 function crowdCheckGroup (group_name in varchar2) return varchar2
 is
   method varchar2(256) := '/crowd/rest/usermanagement/1/group?groupname=';
@@ -364,7 +362,7 @@ begin
   return res;
 end crowdCheckGroup;
 
---Создать группу в Crowd
+-- Create group in Crowd
 function crowdAddGroup (group_name in varchar2) return varchar2
 is
   method varchar2(256) := '/crowd/rest/usermanagement/1/group';
@@ -389,14 +387,14 @@ begin
                            else 'ERROR' end||'"
 }';
   dbms_output.put_line (res);
-  insert into ***REMOVED***_callrest_result 
+  insert into atlassian_callrest_result 
         (system_name, method, full_url, date_call, result_code,                   result_text,                 result_msg, project_id, jdata, project_key) 
   values('crowd','crowdAddGroup',      url,      sysdate,   json_value(res, '$.response'), json_value(res, '$.result'), res,        null,       jdata,  upper(regexp_substr(group_name, '[a-zA-Z0-9]+')));
   select json_value(res, '$.result') into res from dual;
   return res;
 end crowdAddGroup;
 
---Удаление группы в Crowd
+--Delete group in Crowd
 function crowdDeleteGroup (group_name in varchar2) return varchar2
 is
   method varchar2(256) := '/crowd/rest/usermanagement/1/group?groupname=';
@@ -415,14 +413,14 @@ begin
                            else 'ERROR' end||'"
 }';
   dbms_output.put_line (res);
-  insert into ***REMOVED***_callrest_result 
+  insert into atlassian_callrest_result 
         (system_name, method, full_url, date_call, result_code,                   result_text,                 result_msg, project_key ) 
   values('crowd', 'crowdDeleteGroup',      url,      sysdate,   json_value(res, '$.response'), json_value(res, '$.result'), res, upper(regexp_substr(group_name, '[a-zA-Z0-9]+')));
   select json_value(res, '$.result') into res from dual;
   return res;
 end crowdDeleteGroup;
 
---Добавить пользователя в группу в Crowd
+--Add user to group in Crowd
 function crowdAddUserToGroup (group_name in varchar2, user_name in varchar2) return varchar2
 is
   method varchar2(256) := '/crowd/rest/usermanagement/1/group/user/direct?groupname=';
@@ -449,14 +447,14 @@ begin
                            else 'ERROR' end||'"
 }';
   dbms_output.put_line (res);
-  insert into ***REMOVED***_callrest_result 
+  insert into atlassian_callrest_result 
         (system_name, method, full_url, date_call, result_code,                   result_text,                 result_msg, project_key) 
   values('crowd',     'crowdAddUserToGroup',      url,      sysdate,   json_value(res, '$.response'), json_value(res, '$.result'), res,        upper(regexp_substr(group_name, '[a-zA-Z0-9]+')));
   select json_value(res, '$.result') into res from dual;
   return res;
 end crowdAddUserToGroup;
 
---Удалить пользователя из группы в Crowd
+--Remove user from group in Crowd
 function crowdRemoveUserFromGroup (group_name in varchar2, user_name in varchar2) return varchar2
 is
   method varchar2(256) := '/crowd/rest/usermanagement/1/group/user/direct';
@@ -475,7 +473,7 @@ begin
                            else 'ERROR' end||'"
 }';
   dbms_output.put_line(res);
-  insert into ***REMOVED***_callrest_result 
+  insert into atlassian_callrest_result 
         (system_name, method, full_url, date_call, result_code,                   result_text,                 result_msg, project_key) 
   values('crowd', 'crowdRemoveUserFromGroup',      url,      sysdate,   json_value(res, '$.response'), json_value(res, '$.result'), res,   upper(regexp_substr(group_name, '[a-zA-Z0-9]+')));
   select json_value(res, '$.result') into res from dual;
@@ -490,7 +488,7 @@ end crowdRemoveUserFromGroup;
 
 */
 
---Проверить наличие проекта в Jira
+--Check project availability in Jira
 function jiraIsProjectExist (pr_key in varchar2) return varchar2
 is
   method varchar2(256) := '/rest/api/2/project/';
@@ -504,7 +502,7 @@ begin
   return res;
 end jiraIsProjectExist;
 
---Создание проекта в Jira
+--Create project in Jira
 function jiraCreateProject (pr_name in varchar2, pr_key in varchar2, pr_desc in varchar2, t_lead in varchar2) return varchar2
 is
   method varchar2(256) := '/rest/api/2/project';
@@ -538,33 +536,33 @@ begin
                            else 'ERROR' end||'"
 }';
     dbms_output.put_line (res); 
-    insert into ***REMOVED***_callrest_result 
+    insert into atlassian_callrest_result 
           (system_name, method, full_url, date_call, result_code,                   result_text,                 result_msg, project_id, jdata,project_key) 
     values('jira', 'jiraCreateProject',      url,      sysdate,   json_value(res, '$.response'), json_value(res, '$.result'), res,        null, jdata,pr_key);
-    commit; --для того, чтобы raise_application_error не откатил транзакицю и у нас остался лог
+    commit; --so that raise_application_error does not roll back the transaction and we still have a log
     select json_value(res, '$.result') into res from dual;
         if res = 'SUCCESS' then
-        insert into ***REMOVED***_resources
+        insert into atlassian_resources
                 (RESOURCE_NAME,RESOURCE_TYPE,SYSTEM_NAME,PROJECT_KEY,CREATED_BY,CREATION_DATE,DESCRIPTION,RESOURCE_URL,SYSTEM_KEY,ENV_ID,PRODUCTOWNER,PROJECT_ID,DEMO)
         values  (upper(pr_key),'PROJECT','JIRA','S.'||upper(pr_key),upper(t_lead),sysdate, pr_desc, jira||'/projects/'||upper(pr_key),upper(pr_key),null,upper(t_lead),null,0);
             if crowdCheckGroup(upper(pr_key)||'-JIRA-DEVELOPERS') = 'FAILED' then
                 if crowdAddGroup(upper(pr_key)||'-JIRA-DEVELOPERS') = 'SUCCESS' then
                     if crowdAdduserToGroup(upper(pr_key)||'-JIRA-DEVELOPERS', upper(t_lead)) = 'SUCCESS' then
                         cres := jiraSetGroupToProjectRole(upper(pr_key));
-                    else raise_application_error(-20400, 'CROWD Error: возникла ошибка при добавления пользователя '||upper(t_lead)||' в группу '||upper(pr_key)||'-JIRA-DEVELOPERS');
+                    else raise_application_error(-20400, 'CROWD Error: an error occurred while adding a user'||upper(t_lead)||' to group'||upper(pr_key)||'-JIRA-DEVELOPERS');
                     end if;
-                else raise_application_error(-20401, 'CROWD Error: возникла ошибка при создании группы '||upper(pr_key)||'-JIRA-DEVELOPERS');
+                else raise_application_error(-20401, 'CROWD Error: an error occurred while creating the group '||upper(pr_key)||'-JIRA-DEVELOPERS');
                 end if;
-            else raise_application_error(-20402, 'CROWD Error: Группа '||upper(pr_key)||'-JIRA-DEVELOPERS уже существует! Обратитесь в поддержку StarterKit.');
+            else raise_application_error(-20402, 'CROWD Error: Group '||upper(pr_key)||'-JIRA-DEVELOPERS  already exists!  ');
             end if;
-        else raise_application_error(-20403, 'JIRA Error: возникла ошибка при создании проекта '||upper(pr_key)||'!Обратитесь в поддержку StarterKit.');
+        else raise_application_error(-20403, 'JIRA Error: возникла ошибка при создании проекта '||upper(pr_key)||' ');
         end if;
     else raise_application_error(-20410, 'JIRA Error: Проект '||upper(pr_key)||' уже существует. Выберите другое назнвание или обратитесь в поддержку.');
     end if;
   return res;
 end jiraCreateProject;
 
---Удаление проекта в Jira
+--Delete project in Jira
 function jiraDeleteProject (pr_key in varchar2) return varchar2
 is
   method varchar2(256) := '/rest/api/2/project/';
@@ -594,25 +592,25 @@ begin
                            else 'ERROR' end||'"
 }';
     dbms_output.put_line (res);
-    insert into ***REMOVED***_callrest_result 
+    insert into atlassian_callrest_result 
             (system_name, method, full_url, date_call, result_code,                   result_text,                 result_msg, project_key) 
     values('jira','jiraDeleteProject',      url,      sysdate,   json_value(res, '$.response'), json_value(res, '$.result'), res,        pr_key);
-    commit; --для того, чтобы raise_application_error не откатил транзакицю и у нас остался лог
+    commit; --so that raise_application_error does not roll back the transaction and we still have a log
     select json_value(res, '$.result') into res from dual;
     if res = 'SUCCESS' then
-        delete from ***REMOVED***_resources where resource_name = upper(pr_key) and resource_type = 'PROJECT' and system_name = 'JIRA'; 
+        delete from atlassian_resources where resource_name = upper(pr_key) and resource_type = 'PROJECT' and system_name = 'JIRA'; 
         cres := crowdDeleteGroup(upper(pr_key)||'-JIRA-DEVELOPERS'); 
-    else raise_application_error(-20405, 'JIRA Error: возникла ошибка при удалении проекта '||upper(pr_key)||'! Обратитесь в поддержку StarterKit.');
+    else raise_application_error(-20405, 'JIRA Error: возникла ошибка при удалении проекта '||upper(pr_key)||'!  ');
     end if;
   else 
-    delete from ***REMOVED***_resources where resource_name = upper(pr_key) and resource_type = 'PROJECT' and system_name = 'JIRA';
+    delete from atlassian_resources where resource_name = upper(pr_key) and resource_type = 'PROJECT' and system_name = 'JIRA';
     cres := crowdDeleteGroup(upper(pr_key)||'-JIRA-DEVELOPERS');
     return 'SUCCESS';
   end if;
   return res;
 end jiraDeleteProject;
 
---Назначить группу из Crowd на роль Developers в jira   PUT /rest/api/2/project/{projectIdOrKey}/role/{id}
+--Assign a group from Crowd to the Developers role in jira  PUT /rest/api/2/project/{projectIdOrKey}/role/{id}
 function        jiraSetGroupToProjectRole(pr_key in varchar2) return varchar2
 is
   method varchar2(256) := '/rest/api/2/project/'||upper(pr_key)||'/role/'||jiraRoleId; 
@@ -626,8 +624,8 @@ begin
 "id":"'||jiraRoleId||'",
 "categorisedActors": {"atlassian-group-role-actor":["'||upper(pr_key)||'-JIRA-DEVELOPERS"]}
 }';
-/* Если группы нет, то записываем данные в STARTERKIT_CALLREST_RESULT и затем раз в 5 минут обрабатываем процедурой, чтобы назначить права*/
-  insert into ***REMOVED***_callrest_result 
+/* If there is no group, then we write data to ATLASSIAN_CALLREST_RESULT and then every 5 minutes we process it to assign permissions.*/
+  insert into atlassian_callrest_result 
             (system_name, method, full_url, date_call, result_code,result_text,result_msg, jdata, project_key) 
     values('jira','jiraSetGroupToProjectRole',url,sysdate,'-200','FAILED','{"message":"Group permission to Jira project '||upper(pr_key)||' scheduled."}',jdata,pr_key);
     res := 'SUCCESS';
@@ -642,7 +640,7 @@ end jiraSetGroupToProjectRole;
   \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ 
   
 */
---Проверить наличие проекта в Bitbucket
+--Check project availability in Bitbucket
 function bitbucketIsProjectExist (pr_key in varchar2) return varchar2
 is
   method varchar2(256) := '/rest/api/1.0/projects/';
@@ -656,7 +654,7 @@ begin
   return res;
 end bitbucketIsProjectExist;
 
---Создание проекта в Bitbucket
+--Create a project in Bitbucket
 function bitbucketCreateProject (pr_name in varchar2, pr_key in varchar2, pr_desc in varchar2, t_lead in varchar2) return varchar2
 is
   method varchar2(256) := '/rest/api/1.0/projects';
@@ -689,13 +687,13 @@ if bitbucketIsProjectExist(upper(pr_key)) = 'FAILED' then
                            else 'ERROR' end||'"
 }';
   dbms_output.put_line (res); 
-  insert into ***REMOVED***_callrest_result 
+  insert into atlassian_callrest_result 
         (system_name, method, full_url, date_call, result_code,                   result_text,                 result_msg, project_id, jdata, project_key) 
   values('bitbucket', 'bitbucketCreateProject',      url,      sysdate,   json_value(res, '$.response'), json_value(res, '$.result'), res,        null, jdata,pr_key);
-  commit; --для того, чтобы raise_application_error не откатил транзакицю и у нас остался лог
+  commit; --so that raise_application_error does not roll back the transaction and we still have a log
   select json_value(res, '$.result') into res from dual;
   if res = 'SUCCESS' then
-    insert into ***REMOVED***_resources
+    insert into atlassian_resources
                 (RESOURCE_NAME,RESOURCE_TYPE,SYSTEM_NAME,PROJECT_KEY,CREATED_BY,CREATION_DATE,DESCRIPTION,RESOURCE_URL,SYSTEM_KEY,ENV_ID,PRODUCTOWNER,PROJECT_ID,DEMO)
         values  (upper(pr_key),'PROJECT','BITBUCKET','S.'||upper(pr_key),upper(t_lead),sysdate, pr_desc, bitbucket||'/projects/'||upper(pr_key),upper(pr_key),null,upper(t_lead),null,0);
     for i in 1..stashprefix.count
@@ -705,23 +703,23 @@ if bitbucketIsProjectExist(upper(pr_key)) = 'FAILED' then
                     if stashprefix(i) != '-STASH-USERS' then
                         if crowdAdduserToGroup(upper(pr_key)||stashprefix(i), upper(t_lead)) = 'SUCCESS' then
                             cres := bitbucketAddGroupPermToProject(upper(pr_key), stashprefix(i)); --здесь не будет проверок, из-за синхронизации запустим джоб, что раз в 5 минут дождется синхронизации и добавит проава как надо
-                        else raise_application_error(-20400, 'CROWD Error: возникла ошибка при добавления пользователя '||upper(t_lead)||' в группу '||upper(pr_key)||'-BITBUCKET-DEVELOPERS');
+                        else raise_application_error(-20400, 'CROWD Error: an error occurred while adding a user'||upper(t_lead)||' to group'||upper(pr_key)||'-BITBUCKET-DEVELOPERS');
                         end if;
                     else cres := bitbucketAddGroupPermToProject(upper(pr_key), stashprefix(i));
                     end if;
-                else raise_application_error(-20401, 'CROWD Error: возникла ошибка при создании группы '||upper(pr_key)||stashprefix(i));
+                else raise_application_error(-20401, 'CROWD Error: an error occurred while creating the group '||upper(pr_key)||stashprefix(i));
                 end if;
-            else raise_application_error(-20402, 'CROWD Error: Группа '||upper(pr_key)||stashprefix(i)||' уже существует! Обратитесь в поддержку StarterKit.');
+            else raise_application_error(-20402, 'CROWD Error: Group '||upper(pr_key)||stashprefix(i)||'  already exists!  ');
             end if;
         end loop;
-  else raise_application_error(-20407, 'BITBUCKET Error: возникла ошибка при создании проекта '||upper(pr_key)||'!Обратитесь в поддержку StarterKit.');
+  else raise_application_error(-20407, 'BITBUCKET Error: возникла ошибка при создании проекта '||upper(pr_key)||' ');
   end if;
-else raise_application_error(-20410, 'BITBUCKET Error: Проект '||upper(pr_key)||' уже существует!');
+else raise_application_error(-20410, 'BITBUCKET Error: Проект '||upper(pr_key)||'  already exists!');
 end if;
   return res;
 end bitbucketCreateProject;
 
---Создание репозитория в Bitbucket
+--Create repository in Bitbucket
 function bitbucketCreateRepository (pr_name in varchar2, pr_key in varchar2, pr_desc in varchar2, t_lead in varchar2) return varchar2
 is
   method varchar2(256) := '/rest/api/1.0/projects/'||upper(pr_key)||'/repos';
@@ -750,13 +748,13 @@ begin
                            else 'ERROR' end||'"
 }';
   dbms_output.put_line (res); 
-  insert into ***REMOVED***_callrest_result 
+  insert into atlassian_callrest_result 
         (system_name, method, full_url, date_call, result_code,                   result_text,                 result_msg, project_key, jdata) 
   values('bitbucket', 'bitbucketCreateRepository',      url,      sysdate,   json_value(res, '$.response'), json_value(res, '$.result'), res, pr_key, jdata);
-  commit; --для того, чтобы raise_application_error не откатил транзакицю и у нас остался лог
+  commit; --so that raise_application_error does not roll back the transaction and we still have a log
   select json_value(res, '$.result') into res from dual;
   if res = 'SUCCESS' then
-    insert into ***REMOVED***_resources
+    insert into atlassian_resources
                 (RESOURCE_NAME,RESOURCE_TYPE,SYSTEM_NAME,PROJECT_KEY,CREATED_BY,CREATION_DATE,DESCRIPTION,RESOURCE_URL,SYSTEM_KEY,ENV_ID,PRODUCTOWNER,PROJECT_ID,DEMO)
         values  (upper(pr_name)||'REPO','REPOSITORY','BITBUCKET','S.'||upper(pr_key),upper(t_lead),sysdate, pr_desc, bitbucket||'/projects/'||upper(pr_key)||'/repos/'||upper(pr_name)||'REPO/browse',upper(pr_key),null,upper(t_lead),null,0);
     for i in 1..stashprefix.count
@@ -764,11 +762,10 @@ begin
         cres := bitbucketAddGroupPermToRepo(upper(pr_key), stashprefix(i));
     end loop;
   end if;
-  --else raise_application_error(-20408, 'BITBUCKET Error: возникла ошибка при создании репозитория '||upper(pr_key)||'REPO!Обратитесь в поддержку StarterKit.');
   return res;
 end bitbucketCreateRepository;
 
---Удаление проекта в Bitbucket
+--Delete project in Bitbucket
 function bitbucketDeleteProject (pr_key in varchar2) return varchar2
 is
   method varchar2(256) := '/rest/api/1.0/projects/';
@@ -791,36 +788,36 @@ begin
                            else 'ERROR' end||'"
 }';
     dbms_output.put_line (res);
-    insert into ***REMOVED***_callrest_result 
+    insert into atlassian_callrest_result 
             (system_name, method, full_url, date_call, result_code,                   result_text,                 result_msg, project_key) 
     values('bitbucket',  'bitbucketDeleteProject',      url,      sysdate,   json_value(res, '$.response'), json_value(res, '$.result'), res,        pr_key);
-    commit; --для того, чтобы raise_application_error не откатил транзакицю и у нас остался лог
+    commit; --so that raise_application_error does not roll back the transaction and we still have a log
     select json_value(res, '$.result') into res from dual;
     if res = 'SUCCESS' then
-        delete from ***REMOVED***_resources where resource_name = upper(pr_key) and resource_type = 'PROJECT' and system_name = 'BITBUCKET';
+        delete from atlassian_resources where resource_name = upper(pr_key) and resource_type = 'PROJECT' and system_name = 'BITBUCKET';
     --надо ли добавлять проверку наличия группы в Crowd?? Это увеличивает время работы функции (смотря как ответит сервер).
         for i in 1..stashprefix.count
             loop
                 cres := crowdDeleteGroup(upper(pr_key)||stashprefix(i));
                 if cres <> 'SUCCESS' then 
                     cres:=crowdDeleteGroup(upper(pr_key)||'-BITBUCKET-DEVELOPERS');
-                --raise_application_error(-20404, 'CROWD Error: возникла ошибка при удалении группы '||upper(pr_key)||stashprefix(i)||'! Обратитесь в поддержку StarterKit.');
+                --raise_application_error(-20404, 'CROWD Error: возникла ошибка при удалении группы '||upper(pr_key)||stashprefix(i)||'!  ');
                 end if;
             end loop;   
-    else raise_application_error(-20405, 'BITBUCKET Error: возникла ошибка при удалении проекта '||upper(pr_key)||'! Обратитесь в поддержку StarterKit.');
+    else raise_application_error(-20405, 'BITBUCKET Error: возникла ошибка при удалении проекта '||upper(pr_key)||'!  ');
     end if;
   else 
-    delete from ***REMOVED***_resources where resource_name = upper(pr_key) and resource_type = 'PROJECT' and system_name = 'BITBUCKET';
+    delete from atlassian_resources where resource_name = upper(pr_key) and resource_type = 'PROJECT' and system_name = 'BITBUCKET';
     for i in 1..stashprefix.count
             loop
                 cres := crowdDeleteGroup(upper(pr_key)||stashprefix(i));
                 if cres <> 'SUCCESS' then 
                     cres:=crowdDeleteGroup(upper(pr_key)||'-BITBUCKET-DEVELOPERS');
-                --raise_application_error(-20404, 'CROWD Error: возникла ошибка при удалении группы '||upper(pr_key)||stashprefix(i)||'! Обратитесь в поддержку StarterKit.');
+                --raise_application_error(-20404, 'CROWD Error: возникла ошибка при удалении группы '||upper(pr_key)||stashprefix(i)||'!  ');
                 end if;
             end loop;
     res := 'SUCCESS';
-  --raise_application_error(-20406, 'BITBUCKET Error: возникла ошибка при удалении проекта '||upper(pr_key)||'! Проекта не существует. Обратитесь в поддержку StarterKit.');
+  --raise_application_error(-20406, 'BITBUCKET Error: возникла ошибка при удалении проекта '||upper(pr_key)||'! Проекта не существует.  ');
   end if;
   return res;
 end bitbucketDeleteProject;
@@ -847,24 +844,24 @@ begin
                            else 'ERROR' end||'"
 }';
     dbms_output.put_line (res);
-    insert into ***REMOVED***_callrest_result 
+    insert into atlassian_callrest_result 
             (system_name, method, full_url, date_call, result_code,                   result_text,                 result_msg, project_key) 
     values('bitbucket','bitbucketDeleteRepository',      url,      sysdate,   json_value(res, '$.response'), json_value(res, '$.result'), res,        pr_key);
-    commit; --для того, чтобы raise_application_error не откатил транзакицю и у нас остался лог
+    commit; --so that raise_application_error does not roll back the transaction and we still have a log
     select json_value(res, '$.result') into res from dual;
     if res = 'SUCCESS' then
-        delete from ***REMOVED***_resources where resource_name = upper(pr_key)||'REPO' and resource_type = 'REPOSITORY' and system_name = 'BITBUCKET'; 
-    else raise_application_error(-20405, 'BITBUCKET Error: возникла ошибка при удалении репозитория '||upper(pr_key)||'REPO! Обратитесь в поддержку StarterKit.');
+        delete from atlassian_resources where resource_name = upper(pr_key)||'REPO' and resource_type = 'REPOSITORY' and system_name = 'BITBUCKET'; 
+    else raise_application_error(-20405, 'BITBUCKET Error: возникла ошибка при удалении репозитория '||upper(pr_key)||'REPO!  ');
     end if;
   else
-    delete from ***REMOVED***_resources where resource_name = upper(pr_key)||'REPO' and resource_type = 'REPOSITORY' and system_name = 'BITBUCKET';
+    delete from atlassian_resources where resource_name = upper(pr_key)||'REPO' and resource_type = 'REPOSITORY' and system_name = 'BITBUCKET';
     return 'SUCCESS';
-  --raise_application_error(-20406, 'BITBUCKET Error: возникла ошибка при удалении репозитория '||upper(pr_key)||'REPO! Проекта '||upper(pr_key)||' не существует. Обратитесь в поддержку StarterKit.');
+  --raise_application_error(-20406, 'BITBUCKET Error: возникла ошибка при удалении репозитория '||upper(pr_key)||'REPO! Проекта '||upper(pr_key)||' не существует.  ');
   end if;
   return res;
 end bitbucketDeleteRepository;
 
---Добавить права на репозиторий созданной группе в CROWD
+--Add rights to the repository of the created group in CROWD
 function        bitbucketAddGroupPermToRepo (pr_key in varchar2, stashprefix in varchar2) return varchar2 
 is
   method varchar2(256);
@@ -876,16 +873,16 @@ begin
     end if;
   url := bitbucket||method;
   dbms_output.put_line(url);
-/* на этапе создания группы Bitbucket и Crowd еще не синхронизированы.
-Добавляем задачу в очередь, а джоб потом раздаст права, кода сервера синхронизируются по группам
+/* At the stage of creating the group, Bitbucket and Crowd are not yet synchronized.
+We add the task to the queue, and the job will then distribute the rights, the server code is synchronized into groups
 */
-    insert into ***REMOVED***_callrest_result 
+    insert into atlassian_callrest_result 
           (system_name, method,                         full_url, date_call, result_code,   result_text,    result_msg, project_key) 
     values('bitbucket','bitbucketAddGroupPermToRepo',   url,      sysdate,   '-200',        'FAILED', '{"message":"Adding group permission '||upper(pr_key)||stashprefix||' to repo '||upper(pr_key)||'REPO scheduled"}',       pr_key);
   return 'FAILED';
 end bitbucketAddGroupPermToRepo;
 
---Назначить права на проект созданным группам в CROWD /REST/API/1.0/PROJECTS/{PROJECTKEY}/PERMISSIONS/GROUPS?PERMISSION&NAME
+--Assign project rights to created groups in CROWD /REST/API/1.0/PROJECTS/{PROJECTKEY}/PERMISSIONS/GROUPS?PERMISSION&NAME
 function        bitbucketAddGroupPermToProject (pr_key in varchar2, stashprefix in varchar2) return varchar2 
 is
   method varchar2(256);
@@ -897,10 +894,10 @@ begin
     end if;
     url := bitbucket||method||upper(pr_key)||stashprefix;
     dbms_output.put_line(url);
-/* на этапе создания группы Bitbucket и Crowd еще не синхронизированы.
-Добавляем задачу в очередь, а джоб потом раздаст права, кода сервера синхронизируются по группам
+/* At the stage of creating the group, Bitbucket and Crowd are not yet synchronized.
+We add the task to the queue, and the job will then distribute the rights, the server code is synchronized into groups
 */
-    insert into ***REMOVED***_callrest_result 
+    insert into atlassian_callrest_result 
             (system_name, method, full_url, date_call, result_code,                   result_text,                 result_msg, project_key) 
     values('bitbucket',     'bitbucketAddGroupPermToProject',      url,      sysdate,   '-200', 'FAILED', '{"message":"Adding group permission '||upper(pr_key)||stashprefix||' to project '||upper(pr_key)||' scheduled"}',        pr_key);
     return 'FAILED';
@@ -914,7 +911,7 @@ end bitbucketAddGroupPermToProject;
   
 */
 
---Проверить наличие проекта в Confluence GET /rest/api/space/{spaceKey}
+--Check project availability in Confluence GET /rest/api/space/{spaceKey}
 function confluenceIsSpaceExist (pr_key in varchar2) return varchar2
 is
   method varchar2(256) := '/rest/api/space/';
@@ -928,7 +925,7 @@ begin
   return res;
 end confluenceIsSpaceExist;
 
---создание Пространства в Confluence POST /rest/api/space
+--Create Space in Confluence POST /rest/api/space
 function        confluenceCreateSpace (pr_name in varchar2, pr_key in varchar2, pr_desc in varchar2, t_lead in varchar2) return varchar2
 is
   method varchar2(256) := '/rest/api/space/';
@@ -957,34 +954,34 @@ if confluenceIsSpaceExist(upper(pr_key)) = 'FAILED' then
                            else 'ERROR' end||'"
 }';
   dbms_output.put_line (res); 
-  insert into ***REMOVED***_callrest_result 
+  insert into atlassian_callrest_result 
         (system_name, method, full_url, date_call, result_code,                   result_text,                 result_msg, project_id, jdata,project_key) 
   values('confluence','confluenceCreateSpace',      url,      sysdate,   json_value(res, '$.response'), json_value(res, '$.result'), res,        null, jdata,pr_key);
-  commit; --для того, чтобы raise_application_error не откатил транзакицю и у нас остался лог
+  commit; --so that raise_application_error does not roll back the transaction and we still have a log
   select json_value(res, '$.result') into res from dual;
   if res = 'SUCCESS' then
-    insert into ***REMOVED***_resources
+    insert into atlassian_resources
                 (RESOURCE_NAME,RESOURCE_TYPE,SYSTEM_NAME,PROJECT_KEY,CREATED_BY,CREATION_DATE,DESCRIPTION,RESOURCE_URL,SYSTEM_KEY,ENV_ID,PRODUCTOWNER,PROJECT_ID,DEMO)
         values  (upper(pr_key),'SPACE','CONFLUENCE','S.'||upper(pr_key),upper(t_lead),sysdate, pr_desc, confluence||'/display/'||upper(pr_key),upper(pr_key),null,upper(t_lead),null,0);
     if crowdCheckGroup(upper(pr_key)||'-CONFLUENCE-DEVELOPERS') = 'FAILED' then
         if crowdAddGroup(upper(pr_key)||'-CONFLUENCE-DEVELOPERS')= 'SUCCESS' then
             if crowdAdduserToGroup(upper(pr_key)||'-CONFLUENCE-DEVELOPERS', upper(t_lead)) = 'SUCCESS' then
-                  cres := confluenceAddPermissionToGroup(upper(pr_key)); --здесь не будет проверок, из-за синхронизации запустим джоб, что раз в 5 минут дождется синхронизации и добавит права как надо
+                  cres := confluenceAddPermissionToGroup(upper(pr_key)); --there will be no checks, because of synchronization, we will run a job that once every 5 minutes it will wait for synchronization and add the rights as necessary
                  return res;
-            else raise_application_error(-20400, 'CROWD Error: возникла ошибка при добавления пользователя '||upper(t_lead)||' в группу '||upper(pr_key)||'-CONFLUENCE-DEVELOPERS');
+            else raise_application_error(-20400, 'CROWD Error: an error occurred while adding a user'||upper(t_lead)||' to group'||upper(pr_key)||'-CONFLUENCE-DEVELOPERS');
             end if;
-        else raise_application_error(-20401, 'CROWD Error: возникла ошибка при создании группы '||upper(pr_key)||'-CONFLUENCE-DEVELOPERS');
+        else raise_application_error(-20401, 'CROWD Error: an error occurred while creating the group '||upper(pr_key)||'-CONFLUENCE-DEVELOPERS');
         end if;
-    else raise_application_error(-20402, 'CROWD Error: Группа '||upper(pr_key)||'-CONFLUENCE-DEVELOPERS уже существует! Обратитесь в поддержку StarterKit.');
+    else raise_application_error(-20402, 'CROWD Error: Group '||upper(pr_key)||'-CONFLUENCE-DEVELOPERS  already exists!');
     end if;
-  else raise_application_error(-20407, 'CONFLUENCE Error: возникла ошибка при создании пространства '||upper(pr_key)||'!Обратитесь в поддержку StarterKit.');
+  else raise_application_error(-20407, 'CONFLUENCE Error: an error occurred while creating the space '||upper(pr_key));
   end if;
-else raise_application_error(-20410, 'CONFLUENCE Error: Пространство '||upper(pr_key)||' уже существует!');
+else raise_application_error(-20410, 'CONFLUENCE Error: Space '||upper(pr_key)||'  already exists!');
 end if;
   return res;
 end confluenceCreateSpace;
 
---Удаление пространства в Confluence DELETE /rest/api/space/{spaceKey}
+--Confluence Space Removal DELETE /rest/api/space/{spaceKey}
 function confluenceDeleteSpace (pr_key in varchar2) return varchar2
 is
   method varchar2(256) := '/rest/api/space/';
@@ -1005,28 +1002,28 @@ begin
                            else 'ERROR' end||'"
 }';
     dbms_output.put_line (res);
-    insert into ***REMOVED***_callrest_result 
+    insert into atlassian_callrest_result 
             (system_name, method, full_url, date_call, result_code,                   result_text,                 result_msg, project_key) 
     values('bitbucket','confluenceDeleteSpace',      url,      sysdate,   json_value(res, '$.response'), json_value(res, '$.result'), res,        pr_key);
-    commit; --для того, чтобы raise_application_error не откатил транзакицю и у нас остался лог
+    commit; --so that raise_application_error does not roll back the transaction and we still have a log
     select json_value(res, '$.result') into res from dual;
     if res = 'SUCCESS' then
-        delete from ***REMOVED***_resources where resource_name = upper(pr_key) and resource_type = 'SPACE' and system_name = 'CONFLUENCE';
+        delete from atlassian_resources where resource_name = upper(pr_key) and resource_type = 'SPACE' and system_name = 'CONFLUENCE';
         cres := crowdDeleteGroup(upper(pr_key)||'-CONFLUENCE-DEVELOPERS');
-    else raise_application_error(-20405, 'CONFLUENCE Error: возникла ошибка при удалении пространсва '||upper(pr_key)||'! Обратитесь в поддержку StarterKit.');
+    else raise_application_error(-20405, 'CONFLUENCE Error: an error occurred while deleting the space '||upper(pr_key)||'!  ');
     end if;
-  else --raise_application_error(-20406, 'CONFLUENCE Error: возникла ошибка при удалении пространсва '||upper(pr_key)||'! Пространства '||upper(pr_key)||' не существует. Обратитесь в поддержку StarterKit.');
-  delete from ***REMOVED***_resources where resource_name = upper(pr_key) and resource_type = 'SPACE' and system_name = 'CONFLUENCE';
+  else 
+  delete from atlassian_resources where resource_name = upper(pr_key) and resource_type = 'SPACE' and system_name = 'CONFLUENCE';
   cres := crowdDeleteGroup(upper(pr_key)||'-CONFLUENCE-DEVELOPERS');
   return 'SUCCESS';
   end if;
   return res;
 end confluenceDeleteSpace;
 
---Назначить права на проект созданной группе в CROWD с префиксом -CONFLUENCE-DEVELOPERS
+--Assign project rights to created group in CROWD with a prefix -CONFLUENCE-DEVELOPERS
 function        confluenceAddPermissionToGroup (pr_key in varchar2) return varchar2 
 is
-/*этот метод в статусе deprecated, надеюсь когда выпустят нормальный REST я уже не буду тут работать, так что это тебе задачка, Падаван*/
+/*This method is deprecated, I hope that when the normal REST is released, I will not work here anymore, so this is a problem for you, Padawan*/
   method varchar2(256) := '/rpc/json-rpc/confluenceservice-v2'; 
   url varchar2(512);
   res varchar2(1024);
@@ -1040,10 +1037,7 @@ begin
 "method":"addPermissionsToSpace",
 "params": [["VIEWSPACE","EDITSPACE","EDITBLOG","CREATEATTACHMENT","COMMENT"],"'||upper(pr_key)||'-CONFLUENCE-DEVELOPERS","'||upper(pr_key)||'"]
 }';
-/* Если группы нет, то записываем данные в STARTERKIT_CALLREST_RESULT и затем раз в 5 минут обрабатываем процедурой, чтобы назначить права,
-ибо индусы разаработчки Atlassian/Confluence с 2013 года не могут придумать нормальный REST API Для управления ПРАВАМИ на Пространстве Confluence,
-а единственный рабочий json-rpc помечают как DEPRECATED*/
-  insert into ***REMOVED***_callrest_result 
+  insert into atlassian_callrest_result 
             (system_name, method, full_url, date_call, result_code,result_text,result_msg, jdata,project_key) 
     values('confluence','confluenceAddPermissionToGroup',url,sysdate,'-200','FAILED','{"message":"Group permission to Confluence space '||upper(pr_key)||' scheduled."}',jdata,pr_key);
     res := 'FAILED';  
@@ -1057,7 +1051,7 @@ end confluenceAddPermissionToGroup;
   
 */
 
---Проверить наличие репозитория в Artifactory
+--Check availability of repository in Artifactory
 function    artifactoryIsRepoExist(pr_key in varchar2) return varchar2
 is
   method varchar2(64)  := '/artifactory/api/repositories/';
@@ -1081,7 +1075,7 @@ begin
     end if;
 end artifactoryIsRepoExist;
 
---Создание репозиториев в Artifactory
+--Creating repositories in Artifactory
 function artifactoryCreateRepository(pr_key in varchar2, pr_desc in varchar2, t_lead in varchar2) return varchar2
 is
   method varchar2(128) := '/artifactory/api/repositories/';
@@ -1091,19 +1085,18 @@ is
   res varchar2(512);
   cres varchar2(512);
 begin
---Создаем группу в Crowd и добавляем туда создателя 
+--Create a group in Crowd and add the creator there
     if crowdCheckGroup(upper(pr_key)||'-ARTIFACTORY-DEVELOPERS') = 'FAILED' then
         if crowdAddGroup(upper(pr_key)||'-ARTIFACTORY-DEVELOPERS')= 'SUCCESS' then
             if crowdAdduserToGroup(upper(pr_key)||'-ARTIFACTORY-DEVELOPERS', upper(t_lead)) = 'SUCCESS' then
-                 -- cres := confluenceAddPermissionToGroup(upper(pr_key)); --здесь не будет проверок, из-за синхронизации запустим джоб, что раз в 5 минут дождется синхронизации и добавит права как надо
                  cres := 'SUCCESS';
-            else raise_application_error(-20400, 'CROWD Error: возникла ошибка при добавления пользователя '||upper(t_lead)||' в группу '||upper(pr_key)||'-ARTIFACTORY-DEVELOPERS');
+            else raise_application_error(-20400, 'CROWD Error: an error occurred while adding a user'||upper(t_lead)||' to group'||upper(pr_key)||'-ARTIFACTORY-DEVELOPERS');
             end if;
-        else raise_application_error(-20401, 'CROWD Error: возникла ошибка при создании группы '||upper(pr_key)||'-ARTIFACTORY-DEVELOPERS');
+        else raise_application_error(-20401, 'CROWD Error: an error occurred while creating the group '||upper(pr_key)||'-ARTIFACTORY-DEVELOPERS');
         end if;
-    else raise_application_error(-20402, 'CROWD Error: Группа '||upper(pr_key)||'-ARTIFACTORY-DEVELOPERS уже существует! Обратитесь в поддержку StarterKit.');
+    else raise_application_error(-20402, 'CROWD Error: Group '||upper(pr_key)||'-ARTIFACTORY-DEVELOPERS  already exists!  ');
     end if;
---Теперь эту же группу создаем в Artifactory
+--Now we are creating the same group in Artifactory
     if artifactoryCreateGroup(pr_key) = 'SUCCESS' then
         for i in 1..repoprefix.count
             loop
@@ -1130,25 +1123,25 @@ begin
                                    else 'ERROR' end||'"
         }';
           dbms_output.put_line (res); 
-          insert into ***REMOVED***_callrest_result 
+          insert into atlassian_callrest_result 
                 (system_name, method, full_url, date_call, result_code,                   result_text,                 result_msg, project_id, jdata, project_key) 
           values('artifactory','artifactoryCreateRepository',      url,      sysdate,   json_value(res, '$.response'), json_value(res, '$.result'), res,        null, jdata,pr_key);
-          commit; --для того, чтобы raise_application_error не откатил транзакицю и у нас остался лог
+          commit; --so that raise_application_error does not roll back the transaction and we still have a log
           select json_value(res, '$.result') into res from dual;
           if res = 'SUCCESS' then
-            insert into ***REMOVED***_resources
+            insert into atlassian_resources
                         (RESOURCE_NAME,RESOURCE_TYPE,SYSTEM_NAME,PROJECT_KEY,CREATED_BY,CREATION_DATE,DESCRIPTION,RESOURCE_URL,SYSTEM_KEY,ENV_ID,PRODUCTOWNER,PROJECT_ID,DEMO)
                 values  (lower(pr_key)||repoprefix(i),'REPOSITORY','ARTIFACTORY','S.'||upper(pr_key),upper(t_lead),sysdate, pr_desc, pr_url,upper(pr_key),null,upper(t_lead),null,0);
-            --а вот тут как раз раздаем пермишены    
+            -- add permissions    
             cres := artifactoryCreatePermission(pr_key, repoprefix(i), t_lead);
-          else raise_application_error(-20450,'Artifactory error: Не удалось создать репозиторий '||lower(pr_key)||repoprefix(i));
+          else raise_application_error(-20450,'Artifactory error: Could not create repository '||lower(pr_key)||repoprefix(i));
           end if;
           end loop;
         end if;
 return res;
 end artifactoryCreateRepository;
 
---Удалить репозитории Artifactory
+--Delete Artifactory Repositories
 function    artifactoryDeleteRepository(repo_name in varchar2) return varchar2
 is
   method varchar2(256) := '/artifactory/api/repositories/';
@@ -1169,22 +1162,22 @@ if rest_get(artifactory||'/artifactory/api/repositories/'||repo_name) = 200 then
                            else 'ERROR' end||'"
 }';
     dbms_output.put_line (res);
-    insert into ***REMOVED***_callrest_result 
+    insert into atlassian_callrest_result 
             (system_name,   method,                        full_url, date_call, result_code,                   result_text,                 result_msg, project_key) 
     values  ('artifactory','artifactoryDeleteRepository',  url,      sysdate,   json_value(res, '$.response'), json_value(res, '$.result'), res,        upper(regexp_substr(repo_name, '[a-zA-Z0-9]+')));
     select json_value(res, '$.result') into res from dual;
     if res = 'SUCCESS' then
-        delete from ***REMOVED***_resources where resource_name = repo_name and resource_type = 'REPOSITORY' and system_name = 'ARTIFACTORY';
+        delete from atlassian_resources where resource_name = repo_name and resource_type = 'REPOSITORY' and system_name = 'ARTIFACTORY';
         return artifactoryDeletePermission(repo_name);
-    else raise_application_error(-20405, 'Atrifactory Error: возникла ошибка при удалении репозитория '||repo_name||'.');
+    else raise_application_error(-20405, 'Atrifactory: an error occurred while deleting the repository '||repo_name||'.');
     end if;
 else
-    delete from ***REMOVED***_resources where resource_name = repo_name and resource_type = 'REPOSITORY' and system_name = 'ARTIFACTORY';
+    delete from atlassian_resources where resource_name = repo_name and resource_type = 'REPOSITORY' and system_name = 'ARTIFACTORY';
     return 'SUCCESS';
     end if;
 end artifactoryDeleteRepository;
 
---Создаем группу в Artifactory
+--Create group in the Artifactory
 function        artifactoryCreateGroup(pr_key in varchar2) return varchar2
 is
   method varchar2(128) := '/artifactory/api/security/groups/';
@@ -1211,15 +1204,15 @@ begin
                            else 'ERROR' end||'"
 }';
   dbms_output.put_line (res); 
-  insert into ***REMOVED***_callrest_result 
+  insert into atlassian_callrest_result 
         (system_name, method, full_url, date_call, result_code,                   result_text,                 result_msg, project_id, jdata,project_key) 
   values('artifactory','artifactoryCreateGroup',      url,      sysdate,   json_value(res, '$.response'), json_value(res, '$.result'), res,        null, jdata,pr_key);
-  commit; --для того, чтобы raise_application_error не откатил транзакицю и у нас остался лог
+  commit; --so that raise_application_error does not roll back the transaction and we still have a log
   select json_value(res, '$.result') into res from dual;
   return res;
 end artifactoryCreateGroup;
 
---Создаем пермишн в Artifactory
+--Create Artifactory permissions
 function        artifactoryCreatePermission(pr_key in varchar2, prefix in varchar2, t_lead in varchar2) return varchar2
 is
   method varchar2(128) := '/artifactory/api/security/permissions/';
@@ -1265,15 +1258,15 @@ begin
                            else 'ERROR' end||'"
 }';
   dbms_output.put_line (res); 
-  insert into ***REMOVED***_callrest_result 
+  insert into atlassian_callrest_result 
         (system_name, method, full_url, date_call, result_code,                   result_text,                 result_msg, project_id, jdata,project_key) 
   values('artifactory','artifactoryCreatePermission',      url,      sysdate,   json_value(res, '$.response'), json_value(res, '$.result'), res,        null, jdata,pr_key);
-  commit; --для того, чтобы raise_application_error не откатил транзакицю и у нас остался лог
+  commit; --so that raise_application_error does not roll back the transaction and we still have a log
   select json_value(res, '$.result') into res from dual;
   return res;
 end artifactoryCreatePermission;
 
---Удаляем группу в Artifactory а так же из Crowd
+--Remove the group in the Artifactory as well as from Crowd
 function        artifactoryDeleteGroup(pr_key in varchar2) return varchar2
 is
   method varchar2(128) := '/artifactory/api/security/groups/';
@@ -1291,7 +1284,7 @@ begin
                            else 'ERROR' end||'"
 }';
   dbms_output.put_line (res); 
-  insert into ***REMOVED***_callrest_result 
+  insert into atlassian_callrest_result 
         (system_name, method, full_url, date_call, result_code,                   result_text,                 result_msg, project_key) 
   values('artifactory','artifactoryDeleteGroup',      url,      sysdate,   json_value(res, '$.response'), json_value(res, '$.result'), res,        pr_key);
   select json_value(res, '$.result') into res from dual;
@@ -1304,7 +1297,7 @@ begin
   end if;
 end artifactoryDeleteGroup;
 
---Удаляем пермишн в Artifactory
+--delete Artifactory permissions
 function        artifactoryDeletePermission(repo_name in varchar2) return varchar2
 is
   method varchar2(128) := '/artifactory/api/security/permissions/';
@@ -1322,7 +1315,7 @@ begin
                            else 'ERROR' end||'"
 }';
   dbms_output.put_line (res); 
-  insert into ***REMOVED***_callrest_result 
+  insert into atlassian_callrest_result 
         (system_name, method, full_url, date_call, result_code,                   result_text,                 result_msg, project_key) 
   values('artifactory','artifactoryDeletePermission',      url,      sysdate,   json_value(res, '$.response'), json_value(res, '$.result'), res,        upper(regexp_substr(repo_name, '[a-zA-Z0-9]+')));
   select json_value(res, '$.result') into res from dual;
